@@ -9,7 +9,7 @@ pub enum OSCServiceType {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub enum OSCAddressAdType {
+pub enum OSCMethodAccessType {
     /// External applications can only write to this value
     Write,
     /// External applications can only read this value
@@ -19,18 +19,18 @@ pub enum OSCAddressAdType {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub enum OSCAddressValueType {
+pub enum OSCMethodValueType {
     Bool,
     Int,
     Float,
 }
 
-impl OSCAddressValueType {
+impl OSCMethodValueType {
     pub fn osc_type(&self) -> &str {
         match *self {
-            OSCAddressValueType::Bool => "F",
-            OSCAddressValueType::Int => "i",
-            OSCAddressValueType::Float => "f",
+            OSCMethodValueType::Bool => "F",
+            OSCMethodValueType::Int => "i",
+            OSCMethodValueType::Float => "f",
         }
     }
 }
@@ -39,9 +39,9 @@ impl OSCAddressValueType {
 #[serde(rename_all = "camelCase")]
 pub struct OSCMethod {
     pub address: String,
-    pub ad_type: OSCAddressAdType,
+    pub ad_type: OSCMethodAccessType,
     /// Only required for "Read" advertisement types.
-    pub value_type: Option<OSCAddressValueType>,
+    pub value_type: Option<OSCMethodValueType>,
     /// Only required for "Read" advertisement types. (Serialized)
     pub value: Option<String>,
     //, Optional human readable description
