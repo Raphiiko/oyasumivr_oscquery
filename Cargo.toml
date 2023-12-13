@@ -12,6 +12,7 @@ serde_json = "1.0.108"
 hyper = { version = "1.0.1", features = ["full"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["full"] }
+local-ip-address = "0.5.6"
 
 [dev-dependencies]
 rosc = "0.10.1"

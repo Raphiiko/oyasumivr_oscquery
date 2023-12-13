@@ -9,8 +9,9 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
+use local_ip_address::local_ip;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use models::{OSCAddressAd, OSCQueryNode, OSCServiceType};
+use models::{OSCMethod, OSCQueryNode, OSCServiceType};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -25,24 +26,19 @@ lazy_static! {
     static ref MDNS_SERVICE_NAME: Mutex<Option<String>> = Mutex::default();
     static ref MDNS_OSC_SERVICE_FULL_NAME: Mutex<Option<String>> = Mutex::default();
     static ref MDNS_OSC_QUERY_SERVICE_FULL_NAME: Mutex<Option<String>> = Mutex::default();
-    static ref OSC_ADDRESS_ADVERTISEMENTS: Mutex<Vec<OSCAddressAd>> = Mutex::new(vec![]);
+    static ref OSC_METHODS: Mutex<Vec<OSCMethod>> = Mutex::new(vec![]);
     static ref OSCQUERY_ROOT_NODE: Mutex<Option<OSCQueryNode>> = Mutex::default();
     static ref OSC_HOST: Mutex<Option<String>> = Mutex::default();
     static ref OSC_PORT: Mutex<Option<u16>> = Mutex::default();
-    static ref OSCQUERY_HOST: Mutex<Option<String>> = Mutex::default();
     static ref OSCQUERY_PORT: Mutex<Option<u16>> = Mutex::default();
 }
 
-pub async fn init(
-    service_name: &str,
-    osc_host: &str,
-    osc_port: u16,
-) -> Result<(), OSCQueryInitError> {
+pub async fn init(service_name: &str, osc_host: &str, osc_port: u16) -> Result<(), Error> {
     // Ensure single initialization
     {
         let mut initialized = INITIALIZED.lock().await;
         if *initialized {
-            return Err(OSCQueryInitError::AlreadyInitialized);
+            return Err(Error::InitError(OSCQueryInitError::AlreadyInitialized));
         }
         *initialized = true;
     }
@@ -51,8 +47,7 @@ pub async fn init(
         let daemon = match ServiceDaemon::new() {
             Ok(daemon) => daemon,
             Err(e) => {
-                println!("Could not initialize MDNS daemon: {}", e);
-                return Err(OSCQueryInitError::MDNSDaemonInitFailed);
+                return Err(Error::InitError(OSCQueryInitError::MDNSDaemonInitFailed(e)));
             }
         };
         let mut mdns_daemon = MDNS_DAEMON.lock().await;
@@ -73,18 +68,14 @@ pub async fn init(
         *osc_port_ref = Some(osc_port);
     }
     // Initialize the OSCQuery service
-    let (oscquery_host, oscquery_port) = match start_oscquery_service().await {
-        Ok((host, port)) => (host, port),
+    let oscquery_port = match start_oscquery_service().await {
+        Ok(port) => port,
         Err(e) => {
-            println!("Could not start the OSCQuery service: {}", e);
-            return Err(OSCQueryInitError::OSCQueryinitFailed);
+            println!("Could not start the OSCQuery service: {:#?}", e);
+            return Err(Error::InitError(OSCQueryInitError::OSCQueryinitFailed));
         }
     };
-    // Store OSCQuery host and port
-    {
-        let mut oscquery_host_ref = OSCQUERY_HOST.lock().await;
-        *oscquery_host_ref = Some(oscquery_host);
-    }
+    // Store OSCQuery port
     {
         let mut oscquery_port_ref = OSCQUERY_PORT.lock().await;
         *oscquery_port_ref = Some(oscquery_port);
@@ -92,39 +83,48 @@ pub async fn init(
     Ok(())
 }
 
-pub async fn start_advertising() {
+//
+// MDNS Advertising
+//
+
+pub async fn advertise() -> Result<(), Error> {
+    // Ensure single initialization
+    {
+        let initialized = INITIALIZED.lock().await;
+        if !*initialized {
+            return Err(Error::InitError(OSCQueryInitError::NotYetInitialized));
+        }
+    }
+
     let osc_host = {
         let osc_host = OSC_HOST.lock().await;
-        osc_host
-            .as_ref()
-            .expect("Tried to start the OSC service before initialization.")
-            .to_string()
+        osc_host.as_ref().unwrap().clone()
     };
     let osc_port = {
         let osc_port = OSC_PORT.lock().await;
-        *osc_port
-            .as_ref()
-            .expect("Tried to start the OSC service before initialization.")
+        *osc_port.as_ref().unwrap()
     };
-    let oscquery_host = {
-        let oscquery_host = OSCQUERY_HOST.lock().await;
-        oscquery_host
-            .as_ref()
-            .expect("Tried to start the OSCQuery service before initialization.")
-            .to_string()
+    let oscquery_host = match local_ip() {
+        Ok(ip) => match ip {
+            std::net::IpAddr::V4(ip) => ip.to_string(),
+            std::net::IpAddr::V6(ip) => ip.to_string(),
+        },
+        Err(e) => {
+            return Err(Error::LocalIpUnavailable(e));
+        }
     };
     let oscquery_port = {
         let oscquery_port = OSCQUERY_PORT.lock().await;
-        *oscquery_port
-            .as_ref()
-            .expect("Tried to start the OSCQuery service before initialization.")
+        *oscquery_port.as_ref().unwrap()
     };
     // Start advertising OSC service
     set_osc_address(&osc_host, osc_port).await;
     // Start advertising the OSCQuery service
     set_oscquery_address(&oscquery_host, oscquery_port).await;
+    Ok(())
 }
 
+/// Can be used to change the advertised OSC address after initialization, or advertisements have started.
 pub async fn set_osc_address(host: &str, port: u16) {
     // Get the service name
     let mdns_service_name = {
@@ -160,7 +160,6 @@ pub async fn set_osc_address(host: &str, port: u16) {
         .unwrap();
         let mut mdns_osc_service_full_name = MDNS_OSC_SERVICE_FULL_NAME.lock().await;
         *mdns_osc_service_full_name = Some(name.clone());
-        println!("Registered OSC service: {}", name);
     }
 }
 
@@ -199,47 +198,6 @@ async fn set_oscquery_address(host: &str, port: u16) {
         .unwrap();
         let mut mdns_oscquery_service_full_name = MDNS_OSC_QUERY_SERVICE_FULL_NAME.lock().await;
         *mdns_oscquery_service_full_name = Some(name.clone());
-        println!("Registered OSCQuery service: {}", name);
-    }
-}
-
-pub async fn add_osc_address_advertisement(ad: OSCAddressAd) {
-    {
-        let mut osc_address_advertisements = OSC_ADDRESS_ADVERTISEMENTS.lock().await;
-        // Check if the address is already advertised
-        if let Some(index) = osc_address_advertisements
-            .iter()
-            .position(|a| a.address == ad.address)
-        {
-            // Replace the existing advertisement
-            osc_address_advertisements[index] = ad;
-        } else {
-            // Add the new advertisement
-            osc_address_advertisements.push(ad);
-        }
-    }
-    // Update the OSCQuery root node
-    update_oscquery_root_node().await;
-}
-
-pub async fn remove_address_advertisement(full_address: String) {
-    let updated = {
-        let mut osc_address_advertisements = OSC_ADDRESS_ADVERTISEMENTS.lock().await;
-        // Check if the address is already advertised
-        if let Some(index) = osc_address_advertisements
-            .iter()
-            .position(|a| a.address == full_address)
-        {
-            // Remove the advertisement
-            osc_address_advertisements.remove(index);
-            true
-        } else {
-            false
-        }
-    };
-    // Update the OSCQuery root node
-    if updated {
-        update_oscquery_root_node().await;
     }
 }
 
@@ -271,16 +229,87 @@ fn mdns_register_osc_service(
     }
 }
 
+//
+// Managing OSC Methods
+//
+
+pub async fn add_osc_method(ad: OSCMethod) {
+    {
+        let mut osc_methods = OSC_METHODS.lock().await;
+        // Check if the address is already advertised
+        if let Some(index) = osc_methods.iter().position(|a| a.address == ad.address) {
+            // Replace the existing advertisement
+            osc_methods[index] = ad;
+        } else {
+            // Add the new advertisement
+            osc_methods.push(ad);
+        }
+    }
+    // Update the OSCQuery root node
+    update_oscquery_root_node().await;
+}
+
+pub async fn receive_vrchat_avatar_parameters() {
+    add_osc_method(OSCMethod {
+        description: Some("VRChat Avatar Parameters".to_string()),
+        address: "/avatar".to_string(),
+        ad_type: OSCAddressAdType::Write,
+        value_type: None,
+        value: None,
+    })
+    .await
+}
+
+pub async fn receive_vrchat_tracking_data() {
+    add_osc_method(OSCMethod {
+        description: Some("VRChat VR Tracking Data".to_string()),
+        address: "/tracking/vrsystem".to_string(),
+        ad_type: OSCAddressAdType::Write,
+        value_type: None,
+        value: None,
+    })
+    .await
+}
+
+pub async fn remove_osc_method(full_address: String) {
+    let updated = {
+        let mut osc_methods = OSC_METHODS.lock().await;
+        // Check if the method is already added
+        if let Some(index) = osc_methods.iter().position(|a| a.address == full_address) {
+            // Remove the method
+            osc_methods.remove(index);
+            true
+        } else {
+            false
+        }
+    };
+    // Update the OSCQuery root node
+    if updated {
+        update_oscquery_root_node().await;
+    }
+}
+
+pub async fn set_osc_method_value(full_address: String, value: Option<String>) {
+    let mut osc_methods = OSC_METHODS.lock().await;
+    // Check if the method is already added
+    if let Some(index) = osc_methods.iter().position(|a| a.address == full_address) {
+        let method = &mut osc_methods[index];
+        method.value = value;
+        drop(osc_methods);
+        update_oscquery_root_node().await;
+    }
+}
+
 async fn update_oscquery_root_node() {
     let mut root_node = OSCQueryNode {
-        description: Some("root node".to_string()),
+        description: Some("Root Container".to_string()),
         full_path: "/".to_string(),
         access: 0,
         contents: HashMap::<String, OSCQueryNode>::new(),
         value_type: None,
         value: vec![],
     };
-    let osc_address_advertisements = OSC_ADDRESS_ADVERTISEMENTS.lock().await;
+    let osc_address_advertisements = OSC_METHODS.lock().await;
     for ad in osc_address_advertisements.iter() {
         let mut current_node = &mut root_node;
         let address_parts = ad.address.split('/');
@@ -305,10 +334,9 @@ async fn update_oscquery_root_node() {
         }
         current_node.description = ad.description.clone();
         current_node.access = match ad.ad_type {
-            models::OSCAddressAdType::WriteAll => 2,
-            models::OSCAddressAdType::WriteValue => 2,
-            models::OSCAddressAdType::ReadValue => 1,
-            models::OSCAddressAdType::ReadWriteValue => 3,
+            models::OSCAddressAdType::Write => 2,
+            models::OSCAddressAdType::Read => 1,
+            models::OSCAddressAdType::ReadWrite => 3,
         };
         if let Some(value_type) = ad.value_type.clone() {
             current_node.value_type = Some(value_type.osc_type().to_string());
@@ -328,14 +356,20 @@ async fn update_oscquery_root_node() {
     OSCQUERY_ROOT_NODE.lock().await.replace(root_node);
 }
 
-async fn start_oscquery_service() -> Result<(String, u16), std::io::Error> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 0));
-    // let addr = SocketAddr::from(([127, 0, 0, 1], 8083));
+//
+// OSCQuery (HTTP) server
+//
+
+async fn start_oscquery_service() -> Result<u16, Error> {
+    let ip = match local_ip() {
+        Ok(ip) => ip,
+        Err(e) => return Err(Error::LocalIpUnavailable(e)),
+    };
+    let addr = SocketAddr::from((ip, 0));
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(e) => {
-            println!("Could not start OSCQuery HTTP server: {}", e);
-            return Err(e);
+            return Err(Error::IO(e));
         }
     };
     let port = listener.local_addr().unwrap().port();
@@ -344,25 +378,23 @@ async fn start_oscquery_service() -> Result<(String, u16), std::io::Error> {
         loop {
             let (stream, _) = match listener.accept().await {
                 Ok((stream, addr)) => (stream, addr),
-                Err(e) => {
-                    println!("Error accepting connection: {:?}", e);
+                Err(_) => {
                     continue;
                 }
             };
             let io = TokioIo::new(stream);
             tokio::task::spawn(async move {
-                if let Err(err) = http1::Builder::new()
+                if let Err(_) = http1::Builder::new()
                     .serve_connection(io, service_fn(handle_oscquery_request))
                     .await
                 {
-                    println!("Error serving connection: {:?}", err);
+                    // Error serving connection
                 }
             });
         }
     });
 
-    println!("Started OSCQuery service on port {}", port);
-    Ok(("127.0.0.1".to_string(), port))
+    Ok(port)
 }
 
 async fn handle_oscquery_request(
@@ -370,7 +402,7 @@ async fn handle_oscquery_request(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Get path from request
     let path = req.uri().path().to_string();
-    let json = get_json_for_osc_address(path).await;
+    let json = get_json_for_osc_address(path.clone()).await;
     // Get query parameters from request
     let query = req.uri().query();
     if let Some(query) = query {
@@ -405,6 +437,10 @@ async fn handle_oscquery_request(
         }
     }
 }
+
+//
+// Generate (JSON) Request Output
+//
 
 async fn get_json_for_osc_address(address: String) -> Option<String> {
     let root_query_node = {
@@ -456,19 +492,6 @@ async fn get_host_info_json() -> String {
             ("ACCESS".to_string(), true),
             ("VALUE".to_string(), true),
             ("DESCRIPTION".to_string(), true),
-            ("RANGE".to_string(), true),
-            ("CLIPMODE".to_string(), true),
-            ("UNIT".to_string(), true),
-            ("LISTEN".to_string(), true),
-            ("PATH_CHANGED".to_string(), false),
-            ("PATH_RENAMED".to_string(), false),
-            ("PATH_ADDED".to_string(), true),
-            ("PATH_REMOVED".to_string(), true),
-            ("TAGS".to_string(), false),
-            ("EXTENDED_TYPE".to_string(), false),
-            ("CRITICAL".to_string(), false),
-            ("OVERLOADS".to_string(), false),
-            ("HTML".to_string(), false),
         ]),
     };
     serde_json::to_string(&host_info).unwrap()

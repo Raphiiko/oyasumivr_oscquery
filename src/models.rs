@@ -10,15 +10,12 @@ pub enum OSCServiceType {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum OSCAddressAdType {
-    /// External applications can write all values in this address tree.
-    /// (e.g. /avatar would accept writes for it and anything under it, like /avatar/parameters/VRCEmote)
-    WriteAll,
     /// External applications can only write to this value
-    WriteValue,
+    Write,
     /// External applications can only read this value
-    ReadValue,
+    Read,
     /// External applications can both read from- and write to this value
-    ReadWriteValue,
+    ReadWrite,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -40,7 +37,7 @@ impl OSCAddressValueType {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OSCAddressAd {
+pub struct OSCMethod {
     pub address: String,
     pub ad_type: OSCAddressAdType,
     /// Only required for "Read" advertisement types.
@@ -66,11 +63,12 @@ pub struct OSCQueryNode {
     pub value: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub enum OSCQueryInitError {
     AlreadyInitialized,
     OSCQueryinitFailed,
-    MDNSDaemonInitFailed,
+    MDNSDaemonInitFailed(mdns_sd::Error),
+    NotYetInitialized,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -81,4 +79,11 @@ pub struct OSCQueryHostInfo {
     pub osc_ip: String,
     pub osc_port: u16,
     pub extensions: Map<String, bool>,
+}
+
+#[derive(Debug)]
+pub enum Error {
+    IO(std::io::Error),
+    LocalIpUnavailable(local_ip_address::Error),
+    InitError(OSCQueryInitError),
 }
