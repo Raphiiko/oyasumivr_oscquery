@@ -1,7 +1,7 @@
 [package]
 name = "oyasumivr_oscquery"
 description = "Limited OSCQuery implementation in Rust for use with VRChat, for OyasumiVR."
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 homepage = "https://github.com/Raphiiko/oyasumivr_oscquery"

@@ -15,6 +15,7 @@ use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tokio::sync::watch::{channel, Sender};
 use tokio::sync::Mutex;
 
 lazy_static! {
@@ -26,10 +27,16 @@ lazy_static! {
     static ref OSCQUERY_ROOT_NODE: Mutex<Option<OSCQueryNode>> = Mutex::default();
     static ref OSC_HOST: Mutex<Option<String>> = Mutex::default();
     static ref OSC_PORT: Mutex<Option<u16>> = Mutex::default();
+    static ref OSCQUERY_HOST: Mutex<Option<String>> = Mutex::default();
     static ref OSCQUERY_PORT: Mutex<Option<u16>> = Mutex::default();
+    static ref OSCQUERY_SHUTDOWN_SENDER: Mutex<Option<Sender<bool>>> = Mutex::default();
 }
 
-pub async fn init(service_name: &str, osc_host: &str, osc_port: u16) -> Result<(), Error> {
+pub async fn init(
+    service_name: &str,
+    osc_host: &str,
+    osc_port: u16,
+) -> Result<(String, u16), Error> {
     // Ensure single initialization
     {
         let mut initialized = INITIALIZED.lock().await;
@@ -55,17 +62,81 @@ pub async fn init(service_name: &str, osc_host: &str, osc_port: u16) -> Result<(
         *osc_port_ref = Some(osc_port);
     }
     // Initialize the OSCQuery service
-    let oscquery_port = match start_oscquery_service().await {
-        Ok(port) => port,
-        Err(e) => {
-            println!("Could not start the OSCQuery service: {:#?}", e);
-            return Err(Error::InitError(OSCQueryInitError::OSCQueryinitFailed));
-        }
-    };
+    let (oscquery_host, oscquery_port, oscquery_shutdown_sender) =
+        match start_oscquery_service().await {
+            Ok(port) => port,
+            Err(e) => {
+                println!("Could not start the OSCQuery service: {:#?}", e);
+                return Err(Error::InitError(OSCQueryInitError::OSCQueryinitFailed));
+            }
+        };
+    // Store OSCQuery host
+    {
+        let mut oscquery_host_ref = OSCQUERY_HOST.lock().await;
+        *oscquery_host_ref = Some(oscquery_host.clone());
+    }
     // Store OSCQuery port
     {
         let mut oscquery_port_ref = OSCQUERY_PORT.lock().await;
         *oscquery_port_ref = Some(oscquery_port);
+    }
+    // Store OSCQuery shutdown sender
+    {
+        let mut oscquery_shutdown_sender_ref = OSCQUERY_SHUTDOWN_SENDER.lock().await;
+        *oscquery_shutdown_sender_ref = Some(oscquery_shutdown_sender);
+    }
+    Ok((oscquery_host, oscquery_port))
+}
+
+pub async fn deinit() -> Result<(), Error> {
+    // Ensure to only deinitialize if already initialized
+    {
+        let initialized = INITIALIZED.lock().await;
+        if !*initialized {
+            return Err(Error::InitError(OSCQueryInitError::NotYetInitialized));
+        }
+    }
+    // Deregister previous OSC service if needed
+    {
+        let mut mdns_osc_service_full_name = MDNS_OSC_SERVICE_FULL_NAME.lock().await;
+        if let Some(name) = mdns_osc_service_full_name.as_ref() {
+            let daemon = crate::MDNS_DAEMON.lock().await;
+            let daemon = daemon.as_ref().unwrap();
+            daemon
+                .unregister(name)
+                .expect("Could not deregister previous OSC MDNS service.");
+            *mdns_osc_service_full_name = None;
+        }
+    }
+    // Deregister previous OSCQuery service if needed
+    {
+        let mut mdns_oscquery_service_full_name = MDNS_OSC_QUERY_SERVICE_FULL_NAME.lock().await;
+        if let Some(name) = mdns_oscquery_service_full_name.as_ref() {
+            let daemon = crate::MDNS_DAEMON.lock().await;
+            let daemon = daemon.as_ref().unwrap();
+            daemon
+                .unregister(name)
+                .expect("Could not deregister previous OSCQuery MDNS service.");
+            *mdns_oscquery_service_full_name = None;
+        }
+    }
+    // Stop the OSC Query server
+    {
+        let mut oscquery_shutdown_sender = OSCQUERY_SHUTDOWN_SENDER.lock().await;
+        if let Some(sender) = oscquery_shutdown_sender.take() {
+            sender.send(false).unwrap();
+        }
+    }
+    // Reset state
+    {
+        *OSC_HOST.lock().await = None;
+        *OSC_PORT.lock().await = None;
+        *OSCQUERY_HOST.lock().await = None;
+        *OSCQUERY_PORT.lock().await = None;
+        *MDNS_SERVICE_NAME.lock().await = None;
+        *OSCQUERY_ROOT_NODE.lock().await = None;
+        *OSC_METHODS.lock().await = vec![];
+        *INITIALIZED.lock().await = false;
     }
     Ok(())
 }
@@ -347,7 +418,7 @@ async fn update_oscquery_root_node() {
 // OSCQuery (HTTP) server
 //
 
-async fn start_oscquery_service() -> Result<u16, Error> {
+async fn start_oscquery_service() -> Result<(String, u16, Sender<bool>), Error> {
     let ip = match local_ip() {
         Ok(ip) => ip,
         Err(e) => return Err(Error::LocalIpUnavailable(e)),
@@ -359,29 +430,40 @@ async fn start_oscquery_service() -> Result<u16, Error> {
             return Err(Error::IO(e));
         }
     };
+    let ip = listener.local_addr().unwrap().ip().to_string();
     let port = listener.local_addr().unwrap().port();
+
+    let (shutdown_sender, mut shutdown_receiver) = channel::<bool>(true);
 
     tokio::task::spawn(async move {
         loop {
-            let (stream, _) = match listener.accept().await {
-                Ok((stream, addr)) => (stream, addr),
-                Err(_) => {
-                    continue;
+            tokio::select! {
+                accept_result = listener.accept() => {
+                    match accept_result {
+                        Ok((stream, _)) => {
+                            let mut shutdown_receiver = shutdown_receiver.clone();
+                            tokio::task::spawn(async move {
+                                let io = TokioIo::new(stream);
+                                tokio::select! {
+                                    _ = http1::Builder::new().serve_connection(io, service_fn(handle_oscquery_request)) => {}
+                                    // Shutdown signal received
+                                    _ = shutdown_receiver.changed() => {}
+                                }
+                            });
+                        }
+                        Err(_) => {
+                            continue;
+                        }
+                    }
                 }
-            };
-            let io = TokioIo::new(stream);
-            tokio::task::spawn(async move {
-                if let Err(_) = http1::Builder::new()
-                    .serve_connection(io, service_fn(handle_oscquery_request))
-                    .await
-                {
-                    // Error serving connection
+                _ = shutdown_receiver.changed() => {
+                    // Shutdown signal received
+                    break;
                 }
-            });
+            }
         }
     });
-
-    Ok(port)
+    Ok((ip, port, shutdown_sender))
 }
 
 async fn handle_oscquery_request(
