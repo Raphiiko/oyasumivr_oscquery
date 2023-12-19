@@ -23,6 +23,7 @@ pub enum OSCMethodValueType {
     Bool,
     Int,
     Float,
+    String,
 }
 
 impl OSCMethodValueType {
@@ -31,6 +32,7 @@ impl OSCMethodValueType {
             OSCMethodValueType::Bool => "F",
             OSCMethodValueType::Int => "i",
             OSCMethodValueType::Float => "f",
+            OSCMethodValueType::String => "s",
         }
     }
 }

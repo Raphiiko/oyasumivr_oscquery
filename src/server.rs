@@ -407,6 +407,9 @@ async fn update_oscquery_root_node() {
                         current_node.value =
                             vec![serde_json::Value::Number(value.parse().unwrap())];
                     }
+                    OSCMethodValueType::String => {
+                        current_node.value = vec![serde_json::Value::String(value)];
+                    }
                 }
             }
         }
