@@ -10,7 +10,7 @@ This library allows for:
 **It is _not_ a full implementation of OSCQuery:** It _only_ implements the parts that are needed for interacting with VRChat. It does not handle the sending and receiving of OSC packets, for that you'll need to use a crate like [rosc](https://crates.io/crates/rosc).
 
 Its main reason for existence is to add OSCQuery support to [OyasumiVR](https://github.com/Raphiiko/OyasumiVR).
-Pull requests are welcome, however feature requests will likely go ignored, as this library is more of a personal means to and end.
+Pull requests are welcome, however feature requests will likely go ignored, as this library is more of a personal means to an end.
 
 ## Credit
 
