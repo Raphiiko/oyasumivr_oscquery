@@ -88,4 +88,5 @@ pub enum Error {
     IO(std::io::Error),
     LocalIpUnavailable(local_ip_address::Error),
     InitError(OSCQueryInitError),
+    IPV4Unavailable(), 
 }

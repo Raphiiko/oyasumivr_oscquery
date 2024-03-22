@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 
 lazy_static! {
     static ref INITIALIZED: Mutex<bool> = Mutex::new(false);
+    static ref MDNS_ENABLED: Mutex<bool> = Mutex::new(false);
     static ref MDNS_SERVICE_NAME: Mutex<Option<String>> = Mutex::default();
     static ref MDNS_OSC_SERVICE_FULL_NAME: Mutex<Option<String>> = Mutex::default();
     static ref MDNS_OSC_QUERY_SERVICE_FULL_NAME: Mutex<Option<String>> = Mutex::default();
@@ -36,6 +37,7 @@ pub async fn init(
     service_name: &str,
     osc_host: &str,
     osc_port: u16,
+    mdns_enabled: bool,
 ) -> Result<(String, u16), Error> {
     // Ensure single initialization
     {
@@ -46,7 +48,10 @@ pub async fn init(
         *initialized = true;
     }
     // Initialize MDNS daemon
-    crate::init_mdns_daemon().await?;
+    if mdns_enabled {
+        crate::init_mdns_daemon().await?;
+    }
+    *MDNS_ENABLED.lock().await = mdns_enabled;
     // Store service name
     {
         let mut mdns_service_name = MDNS_SERVICE_NAME.lock().await;
@@ -89,6 +94,10 @@ pub async fn init(
 }
 
 pub async fn deinit() -> Result<(), Error> {
+    let mdns_enabled = {
+        let mdns_enabled = MDNS_ENABLED.lock().await;
+        *mdns_enabled
+    };
     // Ensure to only deinitialize if already initialized
     {
         let initialized = INITIALIZED.lock().await;
@@ -97,7 +106,7 @@ pub async fn deinit() -> Result<(), Error> {
         }
     }
     // Deregister previous OSC service if needed
-    {
+    if mdns_enabled {
         let mut mdns_osc_service_full_name = MDNS_OSC_SERVICE_FULL_NAME.lock().await;
         if let Some(name) = mdns_osc_service_full_name.as_ref() {
             let daemon = crate::MDNS_DAEMON.lock().await;
@@ -109,7 +118,7 @@ pub async fn deinit() -> Result<(), Error> {
         }
     }
     // Deregister previous OSCQuery service if needed
-    {
+    if mdns_enabled {
         let mut mdns_oscquery_service_full_name = MDNS_OSC_QUERY_SERVICE_FULL_NAME.lock().await;
         if let Some(name) = mdns_oscquery_service_full_name.as_ref() {
             let daemon = crate::MDNS_DAEMON.lock().await;
@@ -146,6 +155,10 @@ pub async fn deinit() -> Result<(), Error> {
 //
 
 pub async fn advertise() -> Result<(), Error> {
+    // Only advertise if mdns is enabled
+    if !*MDNS_ENABLED.lock().await {
+        return Ok(());
+    }
     // Ensure single initialization
     {
         let initialized = INITIALIZED.lock().await;
@@ -165,7 +178,7 @@ pub async fn advertise() -> Result<(), Error> {
     let oscquery_host = match local_ip() {
         Ok(ip) => match ip {
             std::net::IpAddr::V4(ip) => ip.to_string(),
-            std::net::IpAddr::V6(ip) => ip.to_string(),
+            std::net::IpAddr::V6(_) => return Err(Error::IPV4Unavailable()),
         },
         Err(e) => {
             return Err(Error::LocalIpUnavailable(e));
@@ -184,6 +197,10 @@ pub async fn advertise() -> Result<(), Error> {
 
 /// Can be used to change the advertised OSC address after initialization, or advertisements have started.
 pub async fn set_osc_address(host: &str, port: u16) {
+    // Only advertise if mdns is enabled
+    if !*MDNS_ENABLED.lock().await {
+        return;
+    }
     // Get the service name
     let mdns_service_name = {
         let mdns_service_name = MDNS_SERVICE_NAME.lock().await;
@@ -222,6 +239,10 @@ pub async fn set_osc_address(host: &str, port: u16) {
 }
 
 async fn set_oscquery_address(host: &str, port: u16) {
+    // Only advertise if mdns is enabled
+    if !*MDNS_ENABLED.lock().await {
+        return;
+    }
     // Get the service name
     let mdns_service_name = {
         let mdns_service_name = MDNS_SERVICE_NAME.lock().await;
