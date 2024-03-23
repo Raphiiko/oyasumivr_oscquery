@@ -10,6 +10,7 @@ async fn main() {
         "OyasumiVR Test", // The name of your application (Shows in VRChat's UI)
         "127.0.0.1",      // The IP address your OSC server receives data on
         8081,             // The port your OSC server receives data on
+        true,
     )
     .await
     .unwrap();

@@ -10,7 +10,6 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use local_ip_address::local_ip;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -175,7 +174,7 @@ pub async fn advertise() -> Result<(), Error> {
         let osc_port = OSC_PORT.lock().await;
         *osc_port.as_ref().unwrap()
     };
-    let oscquery_host = match local_ip() {
+    let oscquery_host = match local_ip_address::local_ip() {
         Ok(ip) => match ip {
             std::net::IpAddr::V4(ip) => ip.to_string(),
             std::net::IpAddr::V6(_) => return Err(Error::IPV4Unavailable()),
@@ -443,11 +442,8 @@ async fn update_oscquery_root_node() {
 //
 
 async fn start_oscquery_service() -> Result<(String, u16, Sender<bool>), Error> {
-    let ip = match local_ip() {
-        Ok(ip) => ip,
-        Err(e) => return Err(Error::LocalIpUnavailable(e)),
-    };
-    let addr = SocketAddr::from((ip, 0));
+    // ip for all interfaces
+    let addr = SocketAddr::from(([127, 0, 0, 1], 0));
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(e) => {
