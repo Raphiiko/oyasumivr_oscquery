@@ -92,7 +92,7 @@ pub async fn deinit() -> Result<(), Error> {
         }
     }
     // Stop the MDNS sidecar
-    if let Err(e) =  crate::mdns_sidecar::mark_server_stopped().await {
+    if let Err(e) = crate::mdns_sidecar::mark_server_stopped().await {
         error!("Could not stop the MDNS Sidecar: {:#?}", e);
         return Err(Error::InitError(OSCQueryInitError::MDNSInitFailed));
     }
@@ -118,6 +118,12 @@ pub async fn deinit() -> Result<(), Error> {
 //
 // MDNS Advertising
 //
+
+pub async fn set_osc_port(port: u16) -> Result<(), Error> {
+    let mut osc_port = OSC_PORT.lock().await;
+    *osc_port = Some(port);
+    advertise().await
+}
 
 pub async fn advertise() -> Result<(), Error> {
     // Ensure single initialization

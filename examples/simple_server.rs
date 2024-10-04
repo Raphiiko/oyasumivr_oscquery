@@ -1,5 +1,3 @@
-use std::env;
-
 mod osc_server;
 
 #[tokio::main]
@@ -21,7 +19,7 @@ async fn main() {
 
     // Configure which data we want to receive from VRChat
     oyasumivr_oscquery::server::receive_vrchat_avatar_parameters().await; // /avatar/*, /avatar/parameters/*, etc.
-                                                                          // oyasumivr_oscquery::server::receive_vrchat_tracking_data().await; // /tracking/vrsystem/*
+    oyasumivr_oscquery::server::receive_vrchat_tracking_data().await; // /tracking/vrsystem/*
 
     // Now we can start broadcasting the advertisement for the OSC and OSCQuery server
     oyasumivr_oscquery::server::advertise().await.unwrap();

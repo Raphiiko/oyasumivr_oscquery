@@ -4,6 +4,9 @@ use oyasumivr_oscquery::OSCMethod;
 
 #[tokio::main]
 async fn main() {
+    std::env::set_var("RUST_LOG", "debug");
+    env_logger::init();
+
     // Just start a simple OSC server that logs all received packets, for demonstration purposes.
     osc_server::start("0.0.0.0", 8081);
 
