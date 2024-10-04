@@ -2,15 +2,17 @@ mod osc_server;
 
 #[tokio::main]
 async fn main() {
+    env::set_var("RUST_LOG", "debug");
+    env_logger::init();
+
     // Just start a simple OSC server that logs all received packets, for demonstration purposes.
-    osc_server::start("0.0.0.0", 8081);
+    osc_server::start("0.0.0.0", 8085);
 
     // Initialize the OSCQuery server
     oyasumivr_oscquery::server::init(
-        "OyasumiVR Test", // The name of your application (Shows in VRChat's UI)
-        "127.0.0.1",      // The IP address your OSC server receives data on
-        8081,             // The port your OSC server receives data on
-        true,
+        "OyasumiVR Test",         // The name of your application (Shows in VRChat's UI)
+        8085,                     // The port your OSC server receives data on
+        "./lib/mdns-sidecar.exe", // The (relative) path to the MDNS sidecar executable
     )
     .await
     .unwrap();

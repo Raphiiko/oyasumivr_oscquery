@@ -4,11 +4,14 @@ use oyasumivr_oscquery::OSCMethod;
 
 #[tokio::main]
 async fn main() {
+    std::env::set_var("RUST_LOG", "debug");
+    env_logger::init();
+
     // Just start a simple OSC server that logs all received packets, for demonstration purposes.
     osc_server::start("0.0.0.0", 8081);
 
     // Initialize the OSCQuery server
-    oyasumivr_oscquery::server::init("OyasumiVR Test", "127.0.0.1", 8081, true)
+    oyasumivr_oscquery::server::init("OyasumiVR Test", 8081, "./lib/mdns-sidecar.exe")
         .await
         .unwrap();
 
