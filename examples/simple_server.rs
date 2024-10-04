@@ -2,7 +2,7 @@ mod osc_server;
 
 #[tokio::main]
 async fn main() {
-    env::set_var("RUST_LOG", "debug");
+    std::env::set_var("RUST_LOG", "debug");
     env_logger::init();
 
     // Just start a simple OSC server that logs all received packets, for demonstration purposes.
