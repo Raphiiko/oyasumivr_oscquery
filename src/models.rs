@@ -68,9 +68,10 @@ pub struct OSCQueryNode {
 #[derive(Debug, Clone)]
 pub enum OSCQueryInitError {
     AlreadyInitialized,
-    OSCQueryinitFailed,
-    MDNSDaemonInitFailed(mdns_sd::Error),
     NotYetInitialized,
+    OSCQueryServiceInitFailed,
+    MDNSExecutableNotFound,
+    MDNSInitFailed,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -86,7 +87,5 @@ pub struct OSCQueryHostInfo {
 #[derive(Debug)]
 pub enum Error {
     IO(std::io::Error),
-    LocalIpUnavailable(local_ip_address::Error),
     InitError(OSCQueryInitError),
-    IPV4Unavailable(), 
 }

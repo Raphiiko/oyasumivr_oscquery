@@ -5,7 +5,9 @@ async fn main() {
     // This is also called by all of the available getter functions, 
     // however as it can take a few seconds for VRChat's services to be found, 
     // you may already want to call this function manually earlier in your program.
-    oyasumivr_oscquery::client::init().await.unwrap();
+    oyasumivr_oscquery::client::init(
+        "./lib/mdns-sidecar.exe" // The (relative) path to the MDNS sidecar executable
+    ).await.unwrap();
 
     // Wait a bit for the MDNS daemon to find the services
     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;

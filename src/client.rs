@@ -1,31 +1,30 @@
-use crate::Error;
-use mdns_sd::ServiceEvent;
+use lazy_static::lazy_static;
+use log::error;
 use tokio::sync::Mutex;
+
+use crate::{Error, OSCQueryInitError};
 
 lazy_static! {
     static ref INITIALIZED: Mutex<bool> = Mutex::new(false);
-    static ref OSC_HOST: Mutex<Option<String>> = Mutex::default();
-    static ref OSC_PORT: Mutex<Option<u16>> = Mutex::default();
-    static ref OSCQUERY_HOST: Mutex<Option<String>> = Mutex::default();
-    static ref OSCQUERY_PORT: Mutex<Option<u16>> = Mutex::default();
+    static ref VRC_OSC_HOST: Mutex<Option<String>> = Mutex::default();
+    static ref VRC_OSC_PORT: Mutex<Option<u16>> = Mutex::default();
+    static ref VRC_OSCQUERY_HOST: Mutex<Option<String>> = Mutex::default();
+    static ref VRC_OSCQUERY_PORT: Mutex<Option<u16>> = Mutex::default();
 }
 
 pub async fn get_vrchat_osc_host() -> Option<String> {
-    let _ = init().await;
-    let osc_host = OSC_HOST.lock().await;
+    let osc_host = VRC_OSC_HOST.lock().await;
     osc_host.clone()
 }
 
 pub async fn get_vrchat_osc_port() -> Option<u16> {
-    let _ = init().await;
-    let osc_port = OSC_PORT.lock().await;
+    let osc_port = VRC_OSC_PORT.lock().await;
     osc_port.clone()
 }
 
 pub async fn get_vrchat_osc_address() -> Option<(String, u16)> {
-    let _ = init().await;
-    let osc_host = OSC_HOST.lock().await;
-    let osc_port = OSC_PORT.lock().await;
+    let osc_host = VRC_OSC_HOST.lock().await;
+    let osc_port = VRC_OSC_PORT.lock().await;
     if osc_host.is_none() || osc_port.is_none() {
         return None;
     }
@@ -35,21 +34,18 @@ pub async fn get_vrchat_osc_address() -> Option<(String, u16)> {
 }
 
 pub async fn get_vrchat_oscquery_host() -> Option<String> {
-    let _ = init().await;
-    let oscquery_host = OSCQUERY_HOST.lock().await;
+    let oscquery_host = VRC_OSCQUERY_HOST.lock().await;
     oscquery_host.clone()
 }
 
 pub async fn get_vrchat_oscquery_port() -> Option<u16> {
-    let _ = init().await;
-    let oscquery_port = OSCQUERY_PORT.lock().await;
+    let oscquery_port = VRC_OSCQUERY_PORT.lock().await;
     oscquery_port.clone()
 }
 
 pub async fn get_vrchat_oscquery_address() -> Option<(String, u16)> {
-    let _ = init().await;
-    let oscquery_host = OSCQUERY_HOST.lock().await;
-    let oscquery_port = OSCQUERY_PORT.lock().await;
+    let oscquery_host = VRC_OSCQUERY_HOST.lock().await;
+    let oscquery_port = VRC_OSCQUERY_PORT.lock().await;
     if oscquery_host.is_none() || oscquery_port.is_none() {
         return None;
     }
@@ -58,7 +54,7 @@ pub async fn get_vrchat_oscquery_address() -> Option<(String, u16)> {
     Some((oscquery_host, oscquery_port))
 }
 
-pub async fn init() -> Result<(), Error> {
+pub async fn init(mdns_sidecar_path: &str) -> Result<(), Error> {
     // Stop if we've already initialized
     {
         let mut initialized = INITIALIZED.lock().await;
@@ -67,62 +63,89 @@ pub async fn init() -> Result<(), Error> {
         }
         *initialized = true;
     }
-    // Initialize MDNS daemon
-    crate::init_mdns_daemon().await?;
 
-    // Start browsing for VRChat OSC & OSCQuery services
-    let mdns_guard = crate::MDNS_DAEMON.lock().await;
-    let mdns = mdns_guard.as_ref().unwrap();
-    let osc_receiver = mdns
-        .browse("_osc._udp.local.")
-        .expect("Could not browse for OSC services");
-    let oscquery_receiver = mdns
-        .browse("_oscjson._tcp.local.")
-        .expect("Could not browse for OSC services");
-    drop(mdns_guard);
+    // Set the MDNS sidecar executable path
+    if let Err(e) = crate::mdns_sidecar::set_exe_path(mdns_sidecar_path.to_string()).await {
+        error!("Could not set the MDNS sidecar executable path: {:#?}", e);
+        *INITIALIZED.lock().await = false;
+        return Err(Error::InitError(e));
+    }
 
-    tokio::task::spawn(async move {
-        loop {
-            while let Ok(event) = osc_receiver.recv() {
-                match event {
-                    ServiceEvent::ServiceResolved(info) => {
-                        let full_name = info.get_fullname();
-                        if full_name.starts_with("VRChat-Client-")
-                            && full_name.ends_with("._osc._udp.local.")
-                        {
-                            let host = info.get_addresses_v4().iter().next().unwrap().to_string();
-                            let port = info.get_port();
-                            *OSC_HOST.lock().await = Some(host);
-                            *OSC_PORT.lock().await = Some(port);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        }
-    });
-    tokio::task::spawn(async move {
-        loop {
-            while let Ok(event) = oscquery_receiver.recv() {
-                match event {
-                    ServiceEvent::ServiceResolved(info) => {
-                        let full_name = info.get_fullname();
-                        if full_name.starts_with("VRChat-Client-")
-                            && full_name.ends_with("._oscjson._tcp.local.")
-                        {
-                            let host = info.get_addresses_v4().iter().next().unwrap().to_string();
-                            let port = info.get_port();
-                            *OSCQUERY_HOST.lock().await = Some(host);
-                            *OSCQUERY_PORT.lock().await = Some(port);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        }
-    });
+    if let Err(e) = crate::mdns_sidecar::mark_client_started().await {
+        error!("Could not start the MDNS Sidecar: {:#?}", e);
+        *INITIALIZED.lock().await = false;
+        return Err(Error::InitError(crate::OSCQueryInitError::MDNSInitFailed));
+    }
 
     Ok(())
+}
+
+pub async fn deinit() -> Result<(), Error> {
+    // Ensure to only deinitialize if already initialized
+    {
+        let initialized = INITIALIZED.lock().await;
+        if !*initialized {
+            return Err(Error::InitError(OSCQueryInitError::NotYetInitialized));
+        }
+    }
+    // Stop the MDNS sidecar
+    if let Err(e) = crate::mdns_sidecar::mark_client_stopped().await {
+        error!("Could not stop the MDNS Sidecar: {:#?}", e);
+        return Err(Error::InitError(crate::OSCQueryInitError::MDNSInitFailed));
+    }
+    // Reset state
+    {
+        *VRC_OSC_HOST.lock().await = None;
+        *VRC_OSC_PORT.lock().await = None;
+        *VRC_OSCQUERY_HOST.lock().await = None;
+        *VRC_OSCQUERY_PORT.lock().await = None;
+        *INITIALIZED.lock().await = false;
+    }
+    Ok(())
+}
+
+pub(crate) async fn process_log_line(line: String) {
+    if line.starts_with("VRC_OSC_ADDR_DISCOVERY ") {
+        let parts: Vec<&str> = line.split(' ').collect();
+        if parts.len() != 2 {
+            error!("Invalid VRC_OSC_ADDR_DISCOVERY line: {}", line);
+            return;
+        }
+        let addr = parts[1];
+        let addr_parts: Vec<&str> = addr.split(':').collect();
+        if addr_parts.len() != 2 {
+            error!("Invalid VRC_OSC_ADDR_DISCOVERY address: {}", addr);
+            return;
+        }
+        let host = addr_parts[0].to_string();
+        let port = addr_parts[1].parse::<u16>();
+        if port.is_err() {
+            error!("Invalid VRC_OSC_ADDR_DISCOVERY port: {}", addr_parts[1]);
+            return;
+        }
+        let port = port.unwrap();
+        *VRC_OSC_HOST.lock().await = Some(host);
+        *VRC_OSC_PORT.lock().await = Some(port);
+    } else if line.starts_with("VRC_OSCQUERY_ADDR_DISCOVERY ") {
+        let parts: Vec<&str> = line.split(' ').collect();
+        if parts.len() != 2 {
+            error!("Invalid VRC_OSCQUERY_ADDR_DISCOVERY line: {}", line);
+            return;
+        }
+        let addr = parts[1];
+        let addr_parts: Vec<&str> = addr.split(':').collect();
+        if addr_parts.len() != 2 {
+            error!("Invalid VRC_OSCQUERY_ADDR_DISCOVERY address: {}", addr);
+            return;
+        }
+        let host = addr_parts[0].to_string();
+        let port = addr_parts[1].parse::<u16>();
+        if port.is_err() {
+            error!("Invalid VRC_OSCQUERY_ADDR_DISCOVERY port: {}", addr_parts[1]);
+            return;
+        }
+        let port = port.unwrap();
+        *VRC_OSCQUERY_HOST.lock().await = Some(host);
+        *VRC_OSCQUERY_PORT.lock().await = Some(port);
+    }
 }

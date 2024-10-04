@@ -8,7 +8,7 @@ async fn main() {
     osc_server::start("0.0.0.0", 8081);
 
     // Initialize the OSCQuery server
-    oyasumivr_oscquery::server::init("OyasumiVR Test", "127.0.0.1", 8081, true)
+    oyasumivr_oscquery::server::init("OyasumiVR Test", 8081, "./lib/mdns-sidecar.exe")
         .await
         .unwrap();
 

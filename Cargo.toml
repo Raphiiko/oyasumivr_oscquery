@@ -16,14 +16,14 @@ categories = [
 
 [dependencies]
 tokio = { version = "1.35.0", features = ["full"] }
-mdns-sd = { git = "https://github.com/Raphiiko/vrc-mdns-sd.git", rev = "b0c8914" }
 lazy_static = "1.4.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.108"
 hyper = { version = "1.0.1", features = ["full"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["full"] }
-local-ip-address = "0.5.6"
+log = "0.4.22"
 
 [dev-dependencies]
 rosc = "0.10.1"
+env_logger = "0.11.5"

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::models::{
     Error, OSCMethod, OSCMethodAccessType, OSCMethodValueType, OSCQueryHostInfo, OSCQueryInitError,
-    OSCQueryNode, OSCServiceType,
+    OSCQueryNode,
 };
 use http_body_util::Full;
 use hyper::body::Bytes;
@@ -10,7 +10,8 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+use lazy_static::lazy_static;
+use log::{debug, error};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -19,24 +20,18 @@ use tokio::sync::Mutex;
 
 lazy_static! {
     static ref INITIALIZED: Mutex<bool> = Mutex::new(false);
-    static ref MDNS_ENABLED: Mutex<bool> = Mutex::new(false);
     static ref MDNS_SERVICE_NAME: Mutex<Option<String>> = Mutex::default();
-    static ref MDNS_OSC_SERVICE_FULL_NAME: Mutex<Option<String>> = Mutex::default();
-    static ref MDNS_OSC_QUERY_SERVICE_FULL_NAME: Mutex<Option<String>> = Mutex::default();
     static ref OSC_METHODS: Mutex<Vec<OSCMethod>> = Mutex::new(vec![]);
     static ref OSCQUERY_ROOT_NODE: Mutex<Option<OSCQueryNode>> = Mutex::default();
-    static ref OSC_HOST: Mutex<Option<String>> = Mutex::default();
     static ref OSC_PORT: Mutex<Option<u16>> = Mutex::default();
-    static ref OSCQUERY_HOST: Mutex<Option<String>> = Mutex::default();
     static ref OSCQUERY_PORT: Mutex<Option<u16>> = Mutex::default();
     static ref OSCQUERY_SHUTDOWN_SENDER: Mutex<Option<Sender<bool>>> = Mutex::default();
 }
 
 pub async fn init(
     service_name: &str,
-    osc_host: &str,
     osc_port: u16,
-    mdns_enabled: bool,
+    mdns_sidecar_path: &str,
 ) -> Result<(String, u16), Error> {
     // Ensure single initialization
     {
@@ -46,43 +41,39 @@ pub async fn init(
         }
         *initialized = true;
     }
-    // Initialize MDNS daemon
-    if mdns_enabled {
-        crate::init_mdns_daemon().await?;
-    }
-    *MDNS_ENABLED.lock().await = mdns_enabled;
     // Store service name
     {
         let mut mdns_service_name = MDNS_SERVICE_NAME.lock().await;
         *mdns_service_name = Some(service_name.to_string());
     }
-    // Store OSC host and port
-    {
-        let mut osc_host_ref = OSC_HOST.lock().await;
-        *osc_host_ref = Some(osc_host.to_string());
-    }
+    // Store OSC port
     {
         let mut osc_port_ref = OSC_PORT.lock().await;
         *osc_port_ref = Some(osc_port);
+    }
+    // Set the MDNS sidecar executable path
+    if let Err(e) = crate::mdns_sidecar::set_exe_path(mdns_sidecar_path.to_string()).await {
+        error!("Could not set the MDNS sidecar executable path: {:#?}", e);
+        *INITIALIZED.lock().await = false;
+        return Err(Error::InitError(e));
     }
     // Initialize the OSCQuery service
     let (oscquery_host, oscquery_port, oscquery_shutdown_sender) =
         match start_oscquery_service().await {
             Ok(port) => port,
             Err(e) => {
-                println!("Could not start the OSCQuery service: {:#?}", e);
-                return Err(Error::InitError(OSCQueryInitError::OSCQueryinitFailed));
+                error!("Could not start the OSCQuery service: {:#?}", e);
+                *INITIALIZED.lock().await = false;
+                return Err(Error::InitError(
+                    OSCQueryInitError::OSCQueryServiceInitFailed,
+                ));
             }
         };
-    // Store OSCQuery host
-    {
-        let mut oscquery_host_ref = OSCQUERY_HOST.lock().await;
-        *oscquery_host_ref = Some(oscquery_host.clone());
-    }
     // Store OSCQuery port
     {
         let mut oscquery_port_ref = OSCQUERY_PORT.lock().await;
         *oscquery_port_ref = Some(oscquery_port);
+        debug!("OSCQuery Port: {}", oscquery_port);
     }
     // Store OSCQuery shutdown sender
     {
@@ -93,10 +84,6 @@ pub async fn init(
 }
 
 pub async fn deinit() -> Result<(), Error> {
-    let mdns_enabled = {
-        let mdns_enabled = MDNS_ENABLED.lock().await;
-        *mdns_enabled
-    };
     // Ensure to only deinitialize if already initialized
     {
         let initialized = INITIALIZED.lock().await;
@@ -104,29 +91,10 @@ pub async fn deinit() -> Result<(), Error> {
             return Err(Error::InitError(OSCQueryInitError::NotYetInitialized));
         }
     }
-    // Deregister previous OSC service if needed
-    if mdns_enabled {
-        let mut mdns_osc_service_full_name = MDNS_OSC_SERVICE_FULL_NAME.lock().await;
-        if let Some(name) = mdns_osc_service_full_name.as_ref() {
-            let daemon = crate::MDNS_DAEMON.lock().await;
-            let daemon = daemon.as_ref().unwrap();
-            daemon
-                .unregister(name)
-                .expect("Could not deregister previous OSC MDNS service.");
-            *mdns_osc_service_full_name = None;
-        }
-    }
-    // Deregister previous OSCQuery service if needed
-    if mdns_enabled {
-        let mut mdns_oscquery_service_full_name = MDNS_OSC_QUERY_SERVICE_FULL_NAME.lock().await;
-        if let Some(name) = mdns_oscquery_service_full_name.as_ref() {
-            let daemon = crate::MDNS_DAEMON.lock().await;
-            let daemon = daemon.as_ref().unwrap();
-            daemon
-                .unregister(name)
-                .expect("Could not deregister previous OSCQuery MDNS service.");
-            *mdns_oscquery_service_full_name = None;
-        }
+    // Stop the MDNS sidecar
+    if let Err(e) =  crate::mdns_sidecar::mark_server_stopped().await {
+        error!("Could not stop the MDNS Sidecar: {:#?}", e);
+        return Err(Error::InitError(OSCQueryInitError::MDNSInitFailed));
     }
     // Stop the OSC Query server
     {
@@ -137,9 +105,7 @@ pub async fn deinit() -> Result<(), Error> {
     }
     // Reset state
     {
-        *OSC_HOST.lock().await = None;
         *OSC_PORT.lock().await = None;
-        *OSCQUERY_HOST.lock().await = None;
         *OSCQUERY_PORT.lock().await = None;
         *MDNS_SERVICE_NAME.lock().await = None;
         *OSCQUERY_ROOT_NODE.lock().await = None;
@@ -154,10 +120,6 @@ pub async fn deinit() -> Result<(), Error> {
 //
 
 pub async fn advertise() -> Result<(), Error> {
-    // Only advertise if mdns is enabled
-    if !*MDNS_ENABLED.lock().await {
-        return Ok(());
-    }
     // Ensure single initialization
     {
         let initialized = INITIALIZED.lock().await;
@@ -165,146 +127,26 @@ pub async fn advertise() -> Result<(), Error> {
             return Err(Error::InitError(OSCQueryInitError::NotYetInitialized));
         }
     }
-
-    let osc_host = {
-        let osc_host = OSC_HOST.lock().await;
-        osc_host.as_ref().unwrap().clone()
-    };
     let osc_port = {
         let osc_port = OSC_PORT.lock().await;
         *osc_port.as_ref().unwrap()
-    };
-    let oscquery_host = match local_ip_address::local_ip() {
-        Ok(ip) => match ip {
-            std::net::IpAddr::V4(ip) => ip.to_string(),
-            std::net::IpAddr::V6(_) => return Err(Error::IPV4Unavailable()),
-        },
-        Err(e) => {
-            return Err(Error::LocalIpUnavailable(e));
-        }
     };
     let oscquery_port = {
         let oscquery_port = OSCQUERY_PORT.lock().await;
         *oscquery_port.as_ref().unwrap()
     };
-    // Start advertising OSC service
-    set_osc_address(&osc_host, osc_port).await;
-    // Start advertising the OSCQuery service
-    set_oscquery_address(&oscquery_host, oscquery_port).await;
+    let service_name = {
+        let name = MDNS_SERVICE_NAME.lock().await;
+        name.as_ref().unwrap().to_string()
+    };
+    match crate::mdns_sidecar::mark_server_started(osc_port, oscquery_port, service_name).await {
+        Ok(_) => {}
+        Err(e) => {
+            error!("Failed to start MDNS sidecar: {:#?}", e);
+            return Err(Error::InitError(OSCQueryInitError::MDNSInitFailed));
+        }
+    }
     Ok(())
-}
-
-/// Can be used to change the advertised OSC address after initialization, or advertisements have started.
-pub async fn set_osc_address(host: &str, port: u16) {
-    // Only advertise if mdns is enabled
-    if !*MDNS_ENABLED.lock().await {
-        return;
-    }
-    // Get the service name
-    let mdns_service_name = {
-        let mdns_service_name = MDNS_SERVICE_NAME.lock().await;
-        mdns_service_name
-            .as_ref()
-            .expect("Tried to change the advertised OSC address before initialization.")
-            .to_string()
-    };
-    // Deregister previous OSC service if needed
-    {
-        let mut mdns_osc_service_full_name = MDNS_OSC_SERVICE_FULL_NAME.lock().await;
-        if let Some(name) = mdns_osc_service_full_name.as_ref() {
-            let daemon = crate::MDNS_DAEMON.lock().await;
-            let daemon = daemon.as_ref().unwrap();
-            daemon
-                .unregister(name)
-                .expect("Could not deregister previous OSC MDNS service.");
-            *mdns_osc_service_full_name = None;
-        }
-    }
-    // Register OSC service
-    {
-        let daemon = crate::MDNS_DAEMON.lock().await;
-        let daemon = daemon.as_ref().unwrap();
-        let name = mdns_register_osc_service(
-            daemon,
-            OSCServiceType::OSC,
-            host,
-            port,
-            mdns_service_name.as_str(),
-        )
-        .unwrap();
-        let mut mdns_osc_service_full_name = MDNS_OSC_SERVICE_FULL_NAME.lock().await;
-        *mdns_osc_service_full_name = Some(name.clone());
-    }
-}
-
-async fn set_oscquery_address(host: &str, port: u16) {
-    // Only advertise if mdns is enabled
-    if !*MDNS_ENABLED.lock().await {
-        return;
-    }
-    // Get the service name
-    let mdns_service_name = {
-        let mdns_service_name = MDNS_SERVICE_NAME.lock().await;
-        mdns_service_name
-            .as_ref()
-            .expect("Tried to change the advertised OSCQuery address before initialization.")
-            .to_string()
-    };
-    // Deregister previous OSCQuery service if needed
-    {
-        let mut mdns_oscquery_service_full_name = MDNS_OSC_QUERY_SERVICE_FULL_NAME.lock().await;
-        if let Some(name) = mdns_oscquery_service_full_name.as_ref() {
-            let daemon = crate::MDNS_DAEMON.lock().await;
-            let daemon = daemon.as_ref().unwrap();
-            daemon
-                .unregister(name)
-                .expect("Could not deregister previous OSCQuery MDNS service.");
-            *mdns_oscquery_service_full_name = None;
-        }
-    }
-    // Register OSCQuery service
-    {
-        let daemon = crate::MDNS_DAEMON.lock().await;
-        let daemon = daemon.as_ref().unwrap();
-        let name = mdns_register_osc_service(
-            daemon,
-            OSCServiceType::Query,
-            host,
-            port,
-            mdns_service_name.as_str(),
-        )
-        .unwrap();
-        let mut mdns_oscquery_service_full_name = MDNS_OSC_QUERY_SERVICE_FULL_NAME.lock().await;
-        *mdns_oscquery_service_full_name = Some(name.clone());
-    }
-}
-
-fn mdns_register_osc_service(
-    daemon: &ServiceDaemon,
-    osc_type: OSCServiceType,
-    ip: &str,
-    port: u16,
-    name: &str,
-) -> Result<String, mdns_sd::Error> {
-    let type_as_string = match osc_type {
-        OSCServiceType::OSC => "_osc._udp.local.",
-        OSCServiceType::Query => "_oscjson._tcp.local.",
-    };
-    let properties: [(&str, &str); 1] = [("", "")];
-    let service = ServiceInfo::new(
-        type_as_string,
-        name,
-        type_as_string,
-        ip,
-        port,
-        &properties[..],
-    )
-    .unwrap();
-    let name = service.clone().get_fullname().to_string();
-    match daemon.register(service) {
-        Ok(_) => Ok(name),
-        Err(e) => Err(e),
-    }
 }
 
 //
@@ -559,13 +401,6 @@ async fn get_host_info_json() -> String {
         let name = MDNS_SERVICE_NAME.lock().await;
         name.as_ref().unwrap().to_string()
     };
-    let osc_host = {
-        let osc_host = OSC_HOST.lock().await;
-        osc_host
-            .as_ref()
-            .expect("Tried to get the host info before initialization.")
-            .to_string()
-    };
     let osc_port = {
         let osc_port = OSC_PORT.lock().await;
         *osc_port
@@ -575,7 +410,7 @@ async fn get_host_info_json() -> String {
     let host_info = OSCQueryHostInfo {
         name: service_name,
         osc_transport: "UDP".to_string(),
-        osc_ip: osc_host,
+        osc_ip: "127.0.0.1".to_string(),
         osc_port,
         extensions: HashMap::from([
             ("ACCESS".to_string(), true),
