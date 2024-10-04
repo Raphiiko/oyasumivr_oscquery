@@ -38,7 +38,7 @@ or
 
 You will need to ship this executable with your project, with the rest of your program's files. The upcoming examples will show you how to refer to it.
 
-### Sending
+### Sending (to VRChat)
 
 #### Find VRChat's OSC and OSCQuery servers
 
@@ -68,7 +68,7 @@ let (host, port) = oyasumivr_oscquery::client::get_vrchat_oscquery_address()
 println!("VRChat OSC Query address: {}:{}", host, port);
 ```
 
-### Receiving
+### Receiving (from VRChat)
 
 #### Listen for data from VRChat
 
