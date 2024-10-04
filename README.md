@@ -30,7 +30,7 @@ oyasumivr_oscquery = { git = "https://github.com/Raphiiko/oyasumivr_oscquery.git
 ### Include the sidecar executable in your project
 
 This library depends on a dotnet based sidecar executable that needs to be included with your project. You can find it by:
-1. Downloading the [built executable](https://github.com/Raphiiko/oyasumivr_oscquery/blob/dotnet_sidecar/lib/mdns-sidecar.exe) from this repository
+1. Downloading the [built executable](https://github.com/Raphiiko/oyasumivr_oscquery/blob/main/lib/mdns-sidecar.exe) from this repository
 
 or
 
