@@ -7,6 +7,9 @@ use tokio::sync::Mutex;
 
 use crate::OSCQueryInitError;
 
+// const CREATE_NO_WINDOW: u32 = 0x08000000;
+const DETACHED_PROCESS: u32 = 0x00000008;
+
 lazy_static! {
     static ref SIDECAR_STARTED: Mutex<bool> = Mutex::new(false);
     static ref KILL_TX: Mutex<Option<tokio::sync::mpsc::Sender<()>>> = Mutex::new(None);
@@ -168,6 +171,7 @@ async fn start_sidecar(
         }
     };
     let mut cmd = Command::new(sidecar_path);
+    cmd.creation_flags(DETACHED_PROCESS);
     cmd.args(args);
     cmd.stdout(Stdio::piped());
     let mut child = match cmd.spawn() {
