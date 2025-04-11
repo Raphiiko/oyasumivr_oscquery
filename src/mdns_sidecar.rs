@@ -236,7 +236,7 @@ async fn stop_sidecar(force: bool) {
     // Only stop if started (unless we force)
     {
         let started = SIDECAR_STARTED.lock().await;
-        if *started && !force {
+        if !*started && !force {
             return;
         }
     }
