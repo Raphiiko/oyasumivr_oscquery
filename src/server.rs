@@ -10,23 +10,21 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use lazy_static::lazy_static;
 use log::{debug, error};
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::LazyLock;
 use tokio::net::TcpListener;
 use tokio::sync::watch::{channel, Sender};
 use tokio::sync::Mutex;
 
-lazy_static! {
-    static ref INITIALIZED: Mutex<bool> = Mutex::new(false);
-    static ref MDNS_SERVICE_NAME: Mutex<Option<String>> = Mutex::default();
-    static ref OSC_METHODS: Mutex<Vec<OSCMethod>> = Mutex::new(vec![]);
-    static ref OSCQUERY_ROOT_NODE: Mutex<Option<OSCQueryNode>> = Mutex::default();
-    static ref OSC_PORT: Mutex<Option<u16>> = Mutex::default();
-    static ref OSCQUERY_PORT: Mutex<Option<u16>> = Mutex::default();
-    static ref OSCQUERY_SHUTDOWN_SENDER: Mutex<Option<Sender<bool>>> = Mutex::default();
-}
+static INITIALIZED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+static MDNS_SERVICE_NAME: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::default());
+static OSC_METHODS: LazyLock<Mutex<Vec<OSCMethod>>> = LazyLock::new(|| Mutex::new(vec![]));
+static OSCQUERY_ROOT_NODE: LazyLock<Mutex<Option<OSCQueryNode>>> = LazyLock::new(|| Mutex::default());
+static OSC_PORT: LazyLock<Mutex<Option<u16>>> = LazyLock::new(|| Mutex::default());
+static OSCQUERY_PORT: LazyLock<Mutex<Option<u16>>> = LazyLock::new(|| Mutex::default());
+static OSCQUERY_SHUTDOWN_SENDER: LazyLock<Mutex<Option<Sender<bool>>>> = LazyLock::new(|| Mutex::default());
 
 pub async fn init(
     service_name: &str,

@@ -1,6 +1,6 @@
-use lazy_static::lazy_static;
 use log::{debug, error};
 use std::process::{self, Stdio};
+use std::sync::LazyLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -10,16 +10,14 @@ use crate::OSCQueryInitError;
 // const CREATE_NO_WINDOW: u32 = 0x08000000;
 const DETACHED_PROCESS: u32 = 0x00000008;
 
-lazy_static! {
-    static ref SIDECAR_STARTED: Mutex<bool> = Mutex::new(false);
-    static ref KILL_TX: Mutex<Option<tokio::sync::mpsc::Sender<()>>> = Mutex::new(None);
-    static ref OSC_PORT: Mutex<Option<u16>> = Mutex::new(None);
-    static ref OSCQUERY_PORT: Mutex<Option<u16>> = Mutex::new(None);
-    static ref SERVICE_NAME: Mutex<Option<String>> = Mutex::new(None);
-    static ref CLIENT_ENABLED: Mutex<bool> = Mutex::new(false);
-    static ref SERVER_ENABLED: Mutex<bool> = Mutex::new(false);
-    static ref EXE_PATH: Mutex<Option<String>> = Mutex::new(None);
-}
+static SIDECAR_STARTED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+static KILL_TX: LazyLock<Mutex<Option<tokio::sync::mpsc::Sender<()>>>> = LazyLock::new(|| Mutex::new(None));
+static OSC_PORT: LazyLock<Mutex<Option<u16>>> = LazyLock::new(|| Mutex::new(None));
+static OSCQUERY_PORT: LazyLock<Mutex<Option<u16>>> = LazyLock::new(|| Mutex::new(None));
+static SERVICE_NAME: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+static CLIENT_ENABLED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+static SERVER_ENABLED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+static EXE_PATH: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
 pub async fn set_exe_path(path_str: String) -> Result<(), OSCQueryInitError> {
     // Verify if there's an executable file at the path

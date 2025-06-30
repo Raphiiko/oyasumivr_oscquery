@@ -1,16 +1,14 @@
-use lazy_static::lazy_static;
 use log::error;
+use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
 use crate::{Error, OSCQueryInitError};
 
-lazy_static! {
-    static ref INITIALIZED: Mutex<bool> = Mutex::new(false);
-    static ref VRC_OSC_HOST: Mutex<Option<String>> = Mutex::default();
-    static ref VRC_OSC_PORT: Mutex<Option<u16>> = Mutex::default();
-    static ref VRC_OSCQUERY_HOST: Mutex<Option<String>> = Mutex::default();
-    static ref VRC_OSCQUERY_PORT: Mutex<Option<u16>> = Mutex::default();
-}
+static INITIALIZED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+static VRC_OSC_HOST: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::default());
+static VRC_OSC_PORT: LazyLock<Mutex<Option<u16>>> = LazyLock::new(|| Mutex::default());
+static VRC_OSCQUERY_HOST: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::default());
+static VRC_OSCQUERY_PORT: LazyLock<Mutex<Option<u16>>> = LazyLock::new(|| Mutex::default());
 
 pub async fn get_vrchat_osc_host() -> Option<String> {
     let osc_host = VRC_OSC_HOST.lock().await;
