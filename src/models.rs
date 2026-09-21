@@ -70,7 +70,6 @@ pub enum OSCQueryInitError {
     AlreadyInitialized,
     NotYetInitialized,
     OSCQueryServiceInitFailed,
-    MDNSExecutableNotFound,
     MDNSInitFailed,
 }
 

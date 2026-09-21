@@ -4,11 +4,7 @@ async fn main() {
     env_logger::init();
 
     // Start looking for VRChat's OSC & OSCQuery services.
-    oyasumivr_oscquery::client::init(
-        "./lib/mdns-sidecar.exe", // The (relative) path to the mdns-sidecar.exe executable
-    )
-    .await
-    .unwrap();
+    oyasumivr_oscquery::client::init().await.unwrap();
 
     // Wait a bit for the MDNS daemon to find the services
     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;

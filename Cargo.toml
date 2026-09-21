@@ -1,8 +1,9 @@
 [package]
 name = "oyasumivr_oscquery"
 description = "Limited OSCQuery implementation in Rust for use with VRChat, for OyasumiVR."
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
+rust-version = "1.88"
 license = "MIT"
 homepage = "https://github.com/Raphiiko/oyasumivr_oscquery"
 repository = "https://github.com/Raphiiko/oyasumivr_oscquery"
@@ -22,6 +23,9 @@ hyper = { version = "1.6.0", features = ["full"] }
 http-body-util = "0.1.2"
 hyper-util = { version = "0.1.10", features = ["full"] }
 log = "0.4.22"
+hickory-proto = { version = "=0.26.1", features = ["mdns"] }
+if-addrs = "0.14"
+socket2 = "0.6"
 
 [dev-dependencies]
 rosc = "0.10.1"

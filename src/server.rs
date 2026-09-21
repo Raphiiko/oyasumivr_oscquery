@@ -21,16 +21,14 @@ use tokio::sync::Mutex;
 static INITIALIZED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 static MDNS_SERVICE_NAME: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::default());
 static OSC_METHODS: LazyLock<Mutex<Vec<OSCMethod>>> = LazyLock::new(|| Mutex::new(vec![]));
-static OSCQUERY_ROOT_NODE: LazyLock<Mutex<Option<OSCQueryNode>>> = LazyLock::new(|| Mutex::default());
+static OSCQUERY_ROOT_NODE: LazyLock<Mutex<Option<OSCQueryNode>>> =
+    LazyLock::new(|| Mutex::default());
 static OSC_PORT: LazyLock<Mutex<Option<u16>>> = LazyLock::new(|| Mutex::default());
 static OSCQUERY_PORT: LazyLock<Mutex<Option<u16>>> = LazyLock::new(|| Mutex::default());
-static OSCQUERY_SHUTDOWN_SENDER: LazyLock<Mutex<Option<Sender<bool>>>> = LazyLock::new(|| Mutex::default());
+static OSCQUERY_SHUTDOWN_SENDER: LazyLock<Mutex<Option<Sender<bool>>>> =
+    LazyLock::new(|| Mutex::default());
 
-pub async fn init(
-    service_name: &str,
-    osc_port: u16,
-    mdns_sidecar_path: &str,
-) -> Result<(String, u16), Error> {
+pub async fn init(service_name: &str, osc_port: u16) -> Result<(String, u16), Error> {
     // Ensure single initialization
     {
         let mut initialized = INITIALIZED.lock().await;
@@ -48,12 +46,6 @@ pub async fn init(
     {
         let mut osc_port_ref = OSC_PORT.lock().await;
         *osc_port_ref = Some(osc_port);
-    }
-    // Set the MDNS sidecar executable path
-    if let Err(e) = crate::mdns_sidecar::set_exe_path(mdns_sidecar_path.to_string()).await {
-        error!("Could not set the MDNS sidecar executable path: {:#?}", e);
-        *INITIALIZED.lock().await = false;
-        return Err(Error::InitError(e));
     }
     // Initialize the OSCQuery service
     let (oscquery_host, oscquery_port, oscquery_shutdown_sender) =
@@ -89,9 +81,8 @@ pub async fn deinit() -> Result<(), Error> {
             return Err(Error::InitError(OSCQueryInitError::NotYetInitialized));
         }
     }
-    // Stop the MDNS sidecar
-    if let Err(e) = crate::mdns_sidecar::mark_server_stopped().await {
-        error!("Could not stop the MDNS Sidecar: {:#?}", e);
+    if let Err(e) = crate::mdns::mark_server_stopped().await {
+        error!("Could not stop native mDNS: {e}");
         return Err(Error::InitError(OSCQueryInitError::MDNSInitFailed));
     }
     // Stop the OSC Query server
@@ -143,10 +134,10 @@ pub async fn advertise() -> Result<(), Error> {
         let name = MDNS_SERVICE_NAME.lock().await;
         name.as_ref().unwrap().to_string()
     };
-    match crate::mdns_sidecar::mark_server_started(osc_port, oscquery_port, service_name).await {
+    match crate::mdns::mark_server_started(osc_port, oscquery_port, service_name).await {
         Ok(_) => {}
         Err(e) => {
-            error!("Failed to start MDNS sidecar: {:#?}", e);
+            error!("Failed to start native mDNS: {e}");
             return Err(Error::InitError(OSCQueryInitError::MDNSInitFailed));
         }
     }
