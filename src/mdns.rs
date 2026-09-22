@@ -514,10 +514,19 @@ mod tests {
             .unwrap();
         advertiser.register(instance.clone(), 49152).await.unwrap();
 
-        let discovered = timeout(Duration::from_secs(5), discovered_rx.recv())
-            .await
-            .expect("timed out waiting for mDNS discovery")
-            .expect("mDNS discovery channel closed");
+        let discovered = timeout(Duration::from_secs(5), async {
+            loop {
+                let service = discovered_rx
+                    .recv()
+                    .await
+                    .expect("mDNS discovery channel closed");
+                if service.0 == instance {
+                    break service;
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for mDNS discovery");
         assert_eq!(discovered.0, instance);
         assert_eq!(
             discovered.1,
