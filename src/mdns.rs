@@ -51,6 +51,7 @@ struct Mdns {
     task: JoinHandle<()>,
     registered_services: Arc<RwLock<HashMap<Name, u16>>>,
     followed_services: Arc<RwLock<HashSet<Name>>>,
+    service_cache: Arc<RwLock<HashMap<Name, SocketAddr>>>,
 }
 
 impl Mdns {
@@ -73,6 +74,7 @@ impl Mdns {
             task,
             registered_services,
             followed_services,
+            service_cache,
         })
     }
 
@@ -402,6 +404,7 @@ pub async fn mark_client_started() -> Result<(), String> {
         .map_err(|_| "MDNS_INIT_FAILED".to_string())?;
     *CLIENT_ENABLED.lock().await = true;
     let mdns = MDNS.lock().await.clone().expect("mDNS was not initialized");
+    mdns.service_cache.write().await.clear();
     for service in [OSC_SERVICE, OSCQUERY_SERVICE] {
         let name = Name::from_ascii(service).map_err(|err| err.to_string())?;
         mdns.follow(name).await.map_err(|err| err.to_string())?;
@@ -531,6 +534,46 @@ mod tests {
         assert_eq!(
             discovered.1,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 49152)
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a working local multicast interface"]
+    async fn rediscovers_after_client_reinit_while_server_stays_active() {
+        async fn wait_for_osc_port(port: u16) -> bool {
+            timeout(Duration::from_secs(5), async {
+                loop {
+                    if crate::client::get_vrchat_osc_port().await == Some(port) {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await
+            .is_ok()
+        }
+
+        let advertiser = Mdns::new(mpsc::channel(1).0).await.unwrap();
+        let instance = Name::from_ascii("VRChat-Client-NATIVE-TEST._osc._udp.local.").unwrap();
+        advertiser.register(instance.clone(), 49999).await.unwrap();
+        crate::server::init("Native mDNS test", 49998)
+            .await
+            .unwrap();
+        crate::server::advertise().await.unwrap();
+        crate::client::init().await.unwrap();
+        let first_discovery = wait_for_osc_port(49999).await;
+
+        crate::client::deinit().await.unwrap();
+        crate::client::init().await.unwrap();
+        let second_discovery = wait_for_osc_port(49999).await;
+
+        crate::client::deinit().await.unwrap();
+        advertiser.unregister(instance).await;
+        crate::server::deinit().await.unwrap();
+        assert!(first_discovery, "initial VRChat service discovery failed");
+        assert!(
+            second_discovery,
+            "VRChat service was not rediscovered after reinit"
         );
     }
 }
