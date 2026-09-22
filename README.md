@@ -14,8 +14,6 @@ Pull requests are welcome, however feature requests will likely go ignored, as t
 
 Roughly based on specifications from the [OSCQuery Proposal](https://github.com/vrchat-community/osc/wiki/OSCQuery) and [VRChat's OSCQuery documentation](https://github.com/vrchat-community/osc/wiki/OSCQuery).
 
-mDNS discovery and advertising run in-process, so no sidecar executable is required.
-
 ## Usage
 
 Below you'll find some simple examples of how to use this library. For more detailed examples that you can run straight out of the box, please check the [examples](https://github.com/Raphiiko/oyasumivr_oscquery/tree/main/examples) directory.
@@ -41,7 +39,7 @@ When VRChat is restarted or OSC is disabled/enabled, these addresses (and ports 
 // Start looking for VRChat's OSC & OSCQuery services.
 oyasumivr_oscquery::client::init().await.unwrap();
 
-// Wait a bit for the native mDNS responder to find the services
+// Wait a bit for mDNS discovery to find the services
 tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
 
 // Get the address of the VRChat OSC server
