@@ -10,9 +10,8 @@ async fn main() {
 
     // Initialize the OSCQuery server
     oyasumivr_oscquery::server::init(
-        "OyasumiVR Test",         // The name of your application (Shows in VRChat's UI)
-        8085,                     // The port your OSC server receives data on
-        "./lib/mdns-sidecar.exe", // The (relative) path to the MDNS sidecar executable
+        "OyasumiVR Test", // The name of your application (Shows in VRChat's UI)
+        8085,             // The port your OSC server receives data on
     )
     .await
     .unwrap();

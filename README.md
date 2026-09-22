@@ -14,6 +14,8 @@ Pull requests are welcome, however feature requests will likely go ignored, as t
 
 Roughly based on specifications from the [OSCQuery Proposal](https://github.com/vrchat-community/osc/wiki/OSCQuery) and [VRChat's OSCQuery documentation](https://github.com/vrchat-community/osc/wiki/OSCQuery).
 
+mDNS discovery and advertising run in-process, so no sidecar executable is required.
+
 ## Usage
 
 Below you'll find some simple examples of how to use this library. For more detailed examples that you can run straight out of the box, please check the [examples](https://github.com/Raphiiko/oyasumivr_oscquery/tree/main/examples) directory.
@@ -27,17 +29,6 @@ Add the following dependency to your `Cargo.toml`:
 oyasumivr_oscquery = { git = "https://github.com/Raphiiko/oyasumivr_oscquery.git" }
 ```
 
-### Include the sidecar executable in your project
-
-This library depends on a dotnet based sidecar executable that needs to be included with your project. You can find it by:
-1. Downloading the [built executable](https://github.com/Raphiiko/oyasumivr_oscquery/blob/main/lib/mdns-sidecar.exe) from this repository
-
-or
-
-2. Building it yourself by cloning this repository and running `./build.sh`. The executable will end up in `lib/mdns-sidecar.exe`.
-
-You will need to ship this executable with your project, with the rest of your program's files. The upcoming examples will show you how to refer to it.
-
 ### Sending (to VRChat)
 
 #### Find VRChat's OSC and OSCQuery servers
@@ -48,11 +39,9 @@ When VRChat is restarted or OSC is disabled/enabled, these addresses (and ports 
 
 ```rust
 // Start looking for VRChat's OSC & OSCQuery services.
-oyasumivr_oscquery::client::init(
-    "./lib/mdns-sidecar.exe" // The (relative) path to the mdns-sidecar.exe executable
-).await.unwrap();
+oyasumivr_oscquery::client::init().await.unwrap();
 
-// Wait a bit for the MDNS daemon to find the services
+// Wait a bit for the native mDNS responder to find the services
 tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
 
 // Get the address of the VRChat OSC server
@@ -75,9 +64,8 @@ println!("VRChat OSC Query address: {}:{}", host, port);
 ```rust
 // Initialize the OSCQuery server
 oyasumivr_oscquery::server::init(
-    "OyasumiVR Test",         // The name of your application (Shows in VRChat's UI)
-    8085,                     // The port your OSC server receives data on
-    "./lib/mdns-sidecar.exe", // The (relative) path to the MDNS sidecar executable
+    "OyasumiVR Test", // The name of your application (Shows in VRChat's UI)
+    8085,             // The port your OSC server receives data on
 ).await.unwrap();
 
 // Configure which data we want to receive from VRChat
